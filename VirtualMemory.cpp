@@ -54,11 +54,16 @@ uint64_t readBits(uint64_t virtualAddress, uint64_t bitsRead, uint64_t fixedVirt
 //    return (virtualAddress & ((1LL << (rawBits+1))-1)) >> (VIRTUAL_ADDRESS_WIDTH - OFFSET_WIDTH - bitsRead);
 }
 
-int treeTraverse(int pageNum, int depth, int& maxFrame, int* frameVisited)
+int treeTraverse(int frameNum, int depth, int& maxFrame,
+                 long long& cyclicalDistance,
+                 long long pageSwappedIn,
+                 long long pageNum,
+                 int* frameVisited)
 {
-    if (pageNum > maxFrame)
+    pageNum = pageNum << ((long long) OFFSET_WIDTH);
+    if (frameNum > maxFrame)
     {
-        maxFrame = pageNum;
+        maxFrame = frameNum;
     }
     if (depth == TABLES_DEPTH)
     {
@@ -69,7 +74,7 @@ int treeTraverse(int pageNum, int depth, int& maxFrame, int* frameVisited)
 
     for (int i = 0; i < PAGE_SIZE; i++)
     {
-        PMread((pageNum * PAGE_SIZE) + i,&checkValue);
+        PMread((frameNum * PAGE_SIZE) + i, &checkValue);
         if (checkValue != 0)
         {
             // Finding node without children
@@ -84,7 +89,7 @@ int treeTraverse(int pageNum, int depth, int& maxFrame, int* frameVisited)
             counter++;
         }
     }
-    return (counter == PAGE_SIZE && !inFramesVisited(frameVisited, checkValue)) ? (pageNum) : (0);
+    return (counter == PAGE_SIZE && !inFramesVisited(frameVisited, checkValue)) ? (frameNum) : (0);
 }
 
 int makeRoom(int pageNum, int* frameVisited)
@@ -112,30 +117,8 @@ void initializeFramesVisited(int* frameVisited)
 
 int VMread(uint64_t virtualAddress, word_t* value)
 {
-    // Don't need to check virtualAddress < RAM_SIZE
-
-    // Calculate how many bits are not processed yet
-    word_t addr1;
-    word_t addr2;
-    uint64_t currentFrame = 0;
-    int frameVisited[TABLES_DEPTH+1];
-    initializeFramesVisited(frameVisited);
+    uint64_t currentFrame = helper(virtualAddress);
     int fixedVirtualAddress = VIRTUAL_ADDRESS_WIDTH + (VIRTUAL_ADDRESS_WIDTH % OFFSET_WIDTH);
-
-    // Reading from tree
-    for (int i = 0; i < fixedVirtualAddress - OFFSET_WIDTH; i += OFFSET_WIDTH)
-    {
-        PMread(currentFrame + readBits(virtualAddress, i, fixedVirtualAddress), &addr1);
-        if (addr1 == NOT_IN_MEMORY)
-        {
-            addr1 = makeRoom(ROOT, frameVisited);
-        }
-        currentFrame = addr1 * PAGE_SIZE;
-        for (int j = 0; j < PAGE_SIZE; j++)
-        {
-            PMwrite(currentFrame + j, 0);
-        }
-    }
 
     // Reading from root
     PMread(currentFrame + readBits(virtualAddress, fixedVirtualAddress - OFFSET_WIDTH, fixedVirtualAddress), value);
