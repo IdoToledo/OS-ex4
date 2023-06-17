@@ -1,6 +1,7 @@
 #include "VirtualMemory.h"
 #include "PhysicalMemory.h"
-#include "MemoryConstants.h"
+#include <algorithm>
+
 
 #define ROOT 0
 #define NOT_IN_MEMORY 0
@@ -54,11 +55,47 @@ uint64_t readBits(uint64_t virtualAddress, uint64_t bitsRead, uint64_t fixedVirt
 //    return (virtualAddress & ((1LL << (rawBits+1))-1)) >> (VIRTUAL_ADDRESS_WIDTH - OFFSET_WIDTH - bitsRead);
 }
 
-int treeTraverse(int frameNum, int depth, int& maxFrame,
-                 long long& cyclicalDistance,
-                 long long pageSwappedIn,
-                 long long pageNum,
-                 int* frameVisited)
+void cyclicalTraverse(int frameNum, int depth, long long& cyclicalDistance,
+                     long long pageSwappedIn, long long pageNum,
+                     long long &cyclicalPage, long long& childIndex,
+                     long long& frameIndex)
+{
+    pageNum = pageNum << ((long long) OFFSET_WIDTH);
+    int checkValue = 0;
+    int curCyclicalDistance;
+    int childPageNum;
+    for (long long i = 0; i < PAGE_SIZE; i++)
+    {
+        PMread((frameNum * PAGE_SIZE) + i, &checkValue);
+        if (checkValue != 0)
+        {
+            if (depth == TABLES_DEPTH - 1) // In a leaf's father
+            {
+                childPageNum = pageNum + i;
+                curCyclicalDistance = std::min(NUM_PAGES - std::abs(pageSwappedIn-childPageNum),
+                                               std::abs(pageSwappedIn-childPageNum));
+
+                if (curCyclicalDistance > cyclicalDistance)
+                {
+                    cyclicalDistance = curCyclicalDistance;
+                    cyclicalPage = childPageNum;
+                    childIndex = i;
+                    frameIndex = frameNum;
+                }
+            }
+            else
+            {
+                cyclicalTraverse(checkValue, depth + 1,
+                                 cyclicalDistance, pageSwappedIn,
+                                 pageNum + i,
+                                 cyclicalPage, childIndex, frameIndex);
+            }
+
+        }
+    }
+}
+
+int treeTraverse(int frameNum, int depth, int& maxFrame, int* frameVisited, int prevFrame, int prevFrameIndex)
 {
     pageNum = pageNum << ((long long) OFFSET_WIDTH);
     if (frameNum > maxFrame)
@@ -69,16 +106,16 @@ int treeTraverse(int frameNum, int depth, int& maxFrame,
     {
         return 0;
     }
+
     int counter = 0;
     int checkValue = 0;
-
     for (int i = 0; i < PAGE_SIZE; i++)
     {
         PMread((frameNum * PAGE_SIZE) + i, &checkValue);
         if (checkValue != 0)
         {
             // Finding node without children
-            checkValue = treeTraverse(checkValue, depth+1, maxFrame, frameVisited);
+            checkValue = treeTraverse(checkValue, depth+1, maxFrame, frameVisited, frameNum, i);
             if (checkValue != 0 && !inFramesVisited(frameVisited, checkValue))
             {
                 return checkValue;
@@ -89,13 +126,22 @@ int treeTraverse(int frameNum, int depth, int& maxFrame,
             counter++;
         }
     }
-    return (counter == PAGE_SIZE && !inFramesVisited(frameVisited, checkValue)) ? (frameNum) : (0);
+
+    if (counter == PAGE_SIZE && !inFramesVisited(frameVisited, frameNum))
+    {
+        if (prevFrame != -1)
+        {
+            PMwrite((prevFrame * PAGE_SIZE) + prevFrameIndex, 0);
+        }
+        return frameNum;
+    }
+    return 0;
 }
 
 int makeRoom(int pageNum, int* frameVisited)
 {
     int maxFrame = 0;
-    int f = treeTraverse(0, 0, maxFrame, frameVisited);
+    int f = treeTraverse(0, 0, maxFrame, frameVisited, -1, 0);
     if (f != 0)
     {
         return f;
